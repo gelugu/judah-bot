@@ -10,17 +10,16 @@ if (!process.env.NOTION_TOKEN) {
   exit(1);
 }
 
-const database = async () => {
-  const res = await fetch(
-    `https://api.notion.com/v1/databases/${process.env.NOTION_DB_ID}`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.NOTION_TOKEN}`,
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28",
-      },
-    }
-  );
+const page = async (pageId: string, properties: any) => {
+  const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${process.env.NOTION_TOKEN}`,
+      "Content-Type": "application/json",
+      "Notion-Version": "2022-06-28",
+    },
+    body: JSON.stringify({ properties }),
+  });
   return res.json();
 };
 
@@ -102,16 +101,27 @@ export const getTasks = async (): Promise<ITask[]> => {
   }
 };
 
+export const updateTask = async (
+  pageId: string,
+  properties: any
+): Promise<ITask | undefined> => {
+  try {
+    const task = await page(pageId, properties);
+    console.log(task);
+    return pageToTask(task);
+  } catch (error) {
+    console.error(error);
+  }
+};
+
 export const getPage = async (id: string): Promise<string> => {
   try {
     const page = (await blocks(id)).results;
     const content = page
       .map((b) => {
         if (b.to_do) {
-          const state = b.to_do.checked ? "- [x]" : "- [ ]";
-          return b.to_do.rich_text
-            .map((t) => `${state} ${t.plain_text}`)
-            .join("\n");
+          if (b.to_do.checked) return "";
+          return b.to_do.rich_text.map((t) => t.plain_text).join("\n");
         } else if (b.heading_3) {
           return b.heading_3.rich_text
             .map((t) => `*${t.plain_text}*`)
@@ -121,7 +131,6 @@ export const getPage = async (id: string): Promise<string> => {
         } else return "";
       })
       .join("\n");
-    if (content === "") return "No content";
     return content;
   } catch (error) {
     console.error(error);

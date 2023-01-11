@@ -1,7 +1,8 @@
-import { Bot as GrammyBot, InlineKeyboard, Keyboard } from "grammy";
+import { Bot as GrammyBot, Context, InlineKeyboard, Keyboard } from "grammy";
 import { ICommand } from "./interfaces/bot";
+import { ITask } from "./interfaces/project";
 import { log } from "./log";
-import { getPage, getTasks } from "./notion";
+import { getPage, getTasks, updateTask } from "./notion";
 
 if (!process.env.TG_BOT_TOKEN) {
   console.error("TG_BOT_TOKEN must be set in environment variable");
@@ -44,12 +45,8 @@ class Bot extends GrammyBot {
     commands
       .filter((c) => c.response)
       .forEach((c) => {
-        this.command(c.name, async (ctx) => {
-          if (c.response)
-            await ctx.reply(c.response, {
-              disable_web_page_preview: true,
-              parse_mode: "Markdown",
-            });
+        this.command(c.name, async () => {
+          if (c.response) await this.message(c.response);
         });
       });
 
@@ -62,16 +59,11 @@ class Bot extends GrammyBot {
           `Found ${tasks.length} tasks:\n${tasks.map((p) => p.name).join(", ")}`
         );
 
-        let message = `${tasks.length} tasks.`;
-        let keyboard: InlineKeyboard | undefined = undefined;
         if (tasks.length > 0) {
-          message += "\nChoose task:";
-          keyboard = new InlineKeyboard();
-          tasks.forEach((tasks) => {
-            keyboard?.text(tasks.name, `task:${tasks.id}`).row();
+          tasks.forEach(async (task) => {
+            this.sendTask(task);
           });
         }
-        await ctx.reply(message, { reply_markup: keyboard });
       } catch (error) {
         log.error(error);
       }
@@ -88,16 +80,10 @@ class Bot extends GrammyBot {
           `Found ${tasks.length} tasks:\n${tasks.map((p) => p.name).join(", ")}`
         );
 
-        let message = `${tasks.length} tasks.`;
-        let keyboard: InlineKeyboard | undefined = undefined;
-        if (tasks.length > 0) {
-          message += "\nChoose task:";
-          keyboard = new InlineKeyboard();
-          tasks.forEach((tasks) => {
-            keyboard?.text(tasks.name, `task:${tasks.id}`).row();
-          });
-        }
-        await ctx.reply(message, { reply_markup: keyboard });
+        await this.message(`${tasks.length} tasks for today.`);
+        tasks.forEach(async (task) => {
+          this.sendTask(task);
+        });
       } catch (error) {
         log.error(error);
       }
@@ -118,9 +104,21 @@ class Bot extends GrammyBot {
       }
       try {
         switch (ctx.callbackQuery.data.split(":")[0]) {
-          case "task":
-            log.info("Handle 'task' callback");
-            this.callbackChooseTask(ctx.callbackQuery.data.split(":")[1]);
+          case "schedule":
+            log.info("Handle 'schedule' callback");
+            this.callbackScheduleTask(
+              ctx.callbackQuery.data.split(":")[1],
+              parseInt(ctx.callbackQuery.data.split(":")[2])
+            );
+            break;
+
+          case "set_date":
+            log.info("Handle 'set_date' callback");
+            this.callbackSetDate(
+              parseInt(ctx.callbackQuery.data.split(":")[1]),
+              ctx.callbackQuery.data.split(":")[2],
+              ctx.callbackQuery.data.split(":")[3]
+            );
             break;
 
           default:
@@ -132,20 +130,93 @@ class Bot extends GrammyBot {
     });
   }
 
-  private async callbackChooseTask(taskId: string) {
-    const message = await getPage(taskId);
-    this.message(message);
+  private async callbackScheduleTask(
+    taskId: string,
+    messageId: number | undefined
+  ) {
+    if (!messageId) throw Error("callbackScheduleTask, can't parse messageId");
+    await this.scheduleTask(taskId, messageId);
+  }
+
+  private async callbackSetDate(
+    messageId: number,
+    taskId: string,
+    dateString: string
+  ) {
+    const task = await updateTask(taskId, {
+      Date: { date: { start: dateString } },
+    });
+    if (!task) throw Error("Can't update task");
+
+    const message = await this.renderTaskMessage(task);
+    await this.api.editMessageText(process.env.TG_OWNER!, messageId, message, {
+      disable_web_page_preview: true,
+      parse_mode: "Markdown",
+    });
+    await this.api.editMessageReplyMarkup(process.env.TG_OWNER!, messageId, {
+      reply_markup: this.renderTaskKeyboard(task, messageId),
+    });
+  }
+
+  private async scheduleTask(taskId: string, messageId: number) {
+    const date = new Date();
+    const today = date.toISOString().split("T")[0];
+    date.setDate(date.getDate() + 1);
+    const tomorrow = date.toISOString().split("T")[0];
+    date.setDate(date.getDate() + 6);
+    const nextWeek = date.toISOString().split("T")[0];
+    date.setDate(date.getDate() - 7);
+    date.setMonth(date.getMonth() + 1);
+    const nextMonth = date.toISOString().split("T")[0];
+    log.info(nextMonth);
+
+    await this.api.editMessageReplyMarkup(process.env.TG_OWNER!, messageId, {
+      reply_markup: new InlineKeyboard()
+        .text("Today", `set_date:${messageId}:${taskId}:${today}`)
+        .text("Tomorrow", `set_date:${messageId}:${taskId}:${tomorrow}`)
+        .row()
+        .text("Next week", `set_date:${messageId}:${taskId}:${nextWeek}`)
+        .text("Next month", `set_date:${messageId}:${taskId}:${nextMonth}`)
+        .row(),
+    });
+  }
+
+  private async renderTaskMessage(task: ITask): Promise<string> {
+    let message = `${task.icon} *${task.name}*`;
+    let taskContent = await getPage(task.id);
+    if (taskContent === "") taskContent = `[Add content](${task.url})`;
+    message += `\n\n${taskContent}`;
+    if (task.date) message += `\n\nDate: ${task.date.toDateString()}`;
+
+    return message;
+  }
+
+  private renderTaskKeyboard(task: ITask, messageId: number) {
+    return new InlineKeyboard()
+      .url("Go to task", task.url)
+      .text("Reschedule", `schedule:${task.id}:${messageId}`)
+      .row();
+  }
+
+  private async sendTask(task: ITask) {
+    const message = await this.renderTaskMessage(task);
+    const messageId = await this.message(message);
+    await this.api.editMessageReplyMarkup(process.env.TG_OWNER!, messageId, {
+      reply_markup: this.renderTaskKeyboard(task, messageId),
+    });
   }
 
   async message(
     text: string,
     keyboard: InlineKeyboard | Keyboard | undefined = undefined
-  ) {
-    this.api.sendMessage(process.env.TG_OWNER!.toString(), text, {
-      disable_web_page_preview: true,
-      parse_mode: "Markdown",
-      reply_markup: keyboard,
-    });
+  ): Promise<number> {
+    return (
+      await this.api.sendMessage(process.env.TG_OWNER!.toString(), text, {
+        disable_web_page_preview: true,
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      })
+    ).message_id;
   }
 }
 
