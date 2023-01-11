@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: judah-bot
+  labels:
+    app: judah-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: judah-bot
+  template:
+    metadata:
+      labels:
+        app: judah-bot
+    spec:
+      containers:
+        - name: judah-bot
+          image: gelugu/judah-tg-bot:0.1.0
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: judah-bot-secrets
