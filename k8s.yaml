@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: judah-bot
-          image: gelugu/judah-tg-bot:0.2.0
+          image: gelugu/judah-tg-bot:0.3.0
           imagePullPolicy: Always
           envFrom:
             - secretRef:

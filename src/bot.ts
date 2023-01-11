@@ -2,7 +2,7 @@ import { Bot as GrammyBot, Context, InlineKeyboard, Keyboard } from "grammy";
 import { ICommand } from "./interfaces/bot";
 import { ITask } from "./interfaces/project";
 import { log } from "./log";
-import { getPage, getTasks, updateTask } from "./notion";
+import { getPage, getTags, getTasks, updateTask } from "./notion";
 
 if (!process.env.TG_BOT_TOKEN) {
   console.error("TG_BOT_TOKEN must be set in environment variable");
@@ -22,6 +22,8 @@ const commands: ICommand[] = [
   },
   { name: "all", description: "List all tasks" },
   { name: "today", description: "List today tasks" },
+  { name: "unscheduled", description: "List unscheduled tasks" },
+  { name: "tags", description: "List tags" },
 ];
 
 class Bot extends GrammyBot {
@@ -33,7 +35,13 @@ class Bot extends GrammyBot {
     this.setupCallbacks();
   }
 
-  mainKeyboard = new Keyboard().text("/all").text("/today");
+  mainKeyboard = new Keyboard()
+    .text("/all")
+    .text("/today")
+    .row()
+    .text("/unscheduled")
+    .text("/tags")
+    .row();
 
   private async setupCommands() {
     log.info("Set commands descriptions");
@@ -50,7 +58,7 @@ class Bot extends GrammyBot {
         });
       });
 
-    this.command("all", async (ctx) => {
+    this.command("all", async () => {
       try {
         log.info("Handle 'all' command");
 
@@ -69,7 +77,7 @@ class Bot extends GrammyBot {
       }
     });
 
-    this.command("today", async (ctx) => {
+    this.command("today", async () => {
       try {
         log.info("Handle 'today' command");
 
@@ -84,6 +92,42 @@ class Bot extends GrammyBot {
         tasks.forEach(async (task) => {
           this.sendTask(task);
         });
+      } catch (error) {
+        log.error(error);
+      }
+    });
+
+    this.command("unscheduled", async () => {
+      try {
+        log.info("Handle 'unscheduled' command");
+
+        const tasks = (await getTasks()).filter((t) => !t.date);
+        log.info(
+          `Found ${tasks.length} tasks:\n${tasks.map((p) => p.name).join(", ")}`
+        );
+
+        await this.message(`${tasks.length} unscheduled tasks.`);
+        tasks.forEach(async (task) => {
+          this.sendTask(task);
+        });
+      } catch (error) {
+        log.error(error);
+      }
+    });
+
+    this.command("tags", async () => {
+      try {
+        log.info("Handle 'tags' command");
+
+        const tags = await getTags();
+        log.info(`Found ${tags.length} tags:\n${tags.join(", ")}`);
+
+        const keyboard = new InlineKeyboard();
+        tags.forEach((t, i) => {
+          keyboard.text(t, `tag:${t}`);
+          if (i % 4 === 3) keyboard.row();
+        });
+        await this.message(`Filter tasks by tag:`, keyboard);
       } catch (error) {
         log.error(error);
       }
@@ -121,6 +165,11 @@ class Bot extends GrammyBot {
             );
             break;
 
+          case "tag":
+            log.info("Handle 'tag' callback");
+            this.callbackTag(ctx.callbackQuery.data.split(":")[1]);
+            break;
+
           default:
             break;
         }
@@ -155,6 +204,14 @@ class Bot extends GrammyBot {
     });
     await this.api.editMessageReplyMarkup(process.env.TG_OWNER!, messageId, {
       reply_markup: this.renderTaskKeyboard(task, messageId),
+    });
+  }
+
+  private async callbackTag(tag: string) {
+    const tasks = (await getTasks()).filter((t) => t.tags.includes(tag));
+
+    tasks.forEach(async (task) => {
+      await this.sendTask(task);
     });
   }
 
