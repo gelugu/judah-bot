@@ -1,4 +1,4 @@
-import { Bot as GrammyBot, Context, InlineKeyboard, Keyboard } from "grammy";
+import { Bot as GrammyBot, InlineKeyboard, Keyboard } from "grammy";
 import { ICommand } from "./interfaces/bot";
 import { ITask } from "./interfaces/project";
 import { log } from "./log";
@@ -34,14 +34,6 @@ class Bot extends GrammyBot {
     this.setupCommands();
     this.setupCallbacks();
   }
-
-  mainKeyboard = new Keyboard()
-    .text("/all")
-    .text("/today")
-    .row()
-    .text("/unscheduled")
-    .text("/tags")
-    .row();
 
   private async setupCommands() {
     log.info("Set commands descriptions");
@@ -81,10 +73,9 @@ class Bot extends GrammyBot {
       try {
         log.info("Handle 'today' command");
 
-        const tasks = (await getTasks()).filter(
-          // FIXME: timezone
-          (t) => t.date?.toDateString() == new Date().toDateString()
-        );
+        const tasks = (await getTasks())
+          .filter((t) => t.date?.toDateString() == new Date().toDateString())
+          .filter((t) => t.status !== "Done");
         log.info(
           `Found ${tasks.length} tasks:\n${tasks.map((p) => p.name).join(", ")}`
         );
@@ -168,6 +159,14 @@ class Bot extends GrammyBot {
             );
             break;
 
+            case "done":
+              log.info("Handle 'done' callback");
+              this.doneTask(
+                ctx.callbackQuery.data.split(":")[1],
+                parseInt(ctx.callbackQuery.data.split(":")[2])
+              );
+              break;
+  
           case "tag":
             log.info("Handle 'tag' callback");
             this.callbackTag(ctx.callbackQuery.data.split(":")[1]);
@@ -199,15 +198,6 @@ class Bot extends GrammyBot {
       Date: { date: { start: dateString } },
     });
     if (!task) throw Error("Can't update task");
-
-    const message = await this.renderTaskMessage(task);
-    await this.api.editMessageText(process.env.TG_OWNER!, messageId, message, {
-      disable_web_page_preview: true,
-      parse_mode: "Markdown",
-    });
-    await this.api.editMessageReplyMarkup(process.env.TG_OWNER!, messageId, {
-      reply_markup: this.renderTaskKeyboard(task, messageId),
-    });
 
     await this.api.deleteMessage(process.env.TG_OWNER!, messageId);
   }
@@ -243,6 +233,15 @@ class Bot extends GrammyBot {
     });
   }
 
+  private async doneTask(taskId: string, messageId: number) {
+    const task = await updateTask(taskId, {
+      Status: { status: { name: "Done" } },
+    });
+    if (!task) throw Error("Can't update task");
+
+    await this.api.deleteMessage(process.env.TG_OWNER!, messageId);
+  }
+
   private async renderTaskMessage(task: ITask): Promise<string> {
     let message = `${task.icon} *${task.name}*`;
     let taskContent = await getPage(task.id);
@@ -257,6 +256,7 @@ class Bot extends GrammyBot {
     return new InlineKeyboard()
       .url("Go to task", task.url)
       .text("Reschedule", `schedule:${task.id}:${messageId}`)
+      .text("Done", `done:${task.id}:${messageId}`)
       .row();
   }
 
