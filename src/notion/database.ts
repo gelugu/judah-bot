@@ -1,6 +1,5 @@
 import { ITask } from "../interfaces/project";
 import { fetchBlocks, getDatabase, queryDatabase, updatePage } from ".";
-import { log } from "../log";
 
 export const pageToTask = (page: any): ITask => {
   let icon = "";

@@ -82,6 +82,7 @@ class Bot extends GrammyBot {
         log.info("Handle 'today' command");
 
         const tasks = (await getTasks()).filter(
+          // FIXME: timezone
           (t) => t.date?.toDateString() == new Date().toDateString()
         );
         log.info(
@@ -101,7 +102,9 @@ class Bot extends GrammyBot {
       try {
         log.info("Handle 'unscheduled' command");
 
-        const tasks = (await getTasks()).filter((t) => !t.date);
+        const tasks = (await getTasks()).filter(
+          (t) => !t.date || t.date.getMilliseconds() > Date.now()
+        );
         log.info(
           `Found ${tasks.length} tasks:\n${tasks.map((p) => p.name).join(", ")}`
         );
@@ -205,6 +208,8 @@ class Bot extends GrammyBot {
     await this.api.editMessageReplyMarkup(process.env.TG_OWNER!, messageId, {
       reply_markup: this.renderTaskKeyboard(task, messageId),
     });
+
+    await this.api.deleteMessage(process.env.TG_OWNER!, messageId);
   }
 
   private async callbackTag(tag: string) {
